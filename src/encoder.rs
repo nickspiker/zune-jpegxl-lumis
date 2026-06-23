@@ -100,10 +100,7 @@ pub(crate) struct FrameState {
 pub struct JxlSimpleEncoder<'a> {
     data:    &'a [u8],
     options: EncoderOptions,
-    /// When true, signal Rec.2020 (BT.2020 primaries, D65 white, gamma transfer) in the
-    /// codestream's ColourEncoding instead of the default sRGB. Lumis fork addition: the
-    /// upstream encoder hardcodes sRGB and exposes no colour hook, so wide-gamut output is
-    /// mis-tagged. See `prepare_header` for the bit layout.
+    /// When true, signal Rec.2020 (BT.2020 primaries, D65 white, gamma transfer) in the codestream's ColourEncoding instead of the default sRGB. Lumis fork addition: the upstream encoder hardcodes sRGB and exposes no colour hook, so wide-gamut output is mis-tagged. See `prepare_header` for the bit layout.
     rec2020: bool
 }
 
@@ -1054,9 +1051,7 @@ impl<'a> JxlSimpleEncoder<'a> {
         JxlSimpleEncoder { data, options, rec2020: false }
     }
 
-    /// Lumis fork addition. Signal Rec.2020 (BT.2020 primaries + D65 white + gamma transfer)
-    /// in the codestream's ColourEncoding rather than the default sRGB. Use this when the input
-    /// RGB is wide-gamut Rec.2020 so profile-aware decoders interpret it correctly.
+    /// Lumis fork addition. Signal Rec.2020 (BT.2020 primaries + D65 white + gamma transfer) in the codestream's ColourEncoding rather than the default sRGB. Use this when the input RGB is wide-gamut Rec.2020 so profile-aware decoders interpret it correctly.
     pub fn set_rec2020(mut self, rec2020: bool) -> Self {
         self.rec2020 = rec2020;
         self
@@ -1543,14 +1538,8 @@ fn prepare_header(frame: &mut FrameState, add_image_header: bool, is_last: bool)
         output.put_bits(1, 0); // not xyb
 
         if frame.rec2020 && colorspace.num_components() > 2 {
-            // Lumis fork: signal Rec.2020 colour for wide-gamut RGB output. The JXL
-            // ColourEncoding bundle fields are written with the enum distribution, where
-            // `put_bits(2, v)` selects enum value `v` (0..2; 3 escapes to extended). Field
-            // order for an RGB space (libjxl ColorEncodingBundle): colour_space, white_point,
-            // primaries, transfer_function, rendering_intent.
-            // Enum fields use the JXL Enum distribution U32(Val(0), Val(1), BitsOffset(4,2),
-            // BitsOffset(6,18)): value 0 -> u(2)=0; value 1 -> u(2)=1; values 2..=17 ->
-            // selector u(2)=2 then u(4)=value-2; values 18.. -> selector u(2)=3 then u(6)=value-18.
+            // Lumis fork: signal Rec.2020 colour for wide-gamut RGB output. The JXL ColourEncoding bundle fields are written with the enum distribution, where `put_bits(2, v)` selects enum value `v` (0..2; 3 escapes to extended). Field order for an RGB space (libjxl ColorEncodingBundle): colour_space, white_point, primaries, transfer_function, rendering_intent.
+            // Enum fields use the JXL Enum distribution U32(Val(0), Val(1), BitsOffset(4,2), BitsOffset(6,18)): value 0 -> u(2)=0; value 1 -> u(2)=1; values 2..=17 -> selector u(2)=2 then u(4)=value-2; values 18.. -> selector u(2)=3 then u(6)=value-18.
             output.put_bits(1, 0); // all_default = false
             output.put_bits(1, 0); // want_icc = false
             output.put_bits(2, 0); // colour_space = kRGB (0)
@@ -1558,8 +1547,7 @@ fn prepare_header(frame: &mut FrameState, add_image_header: bool, is_last: bool)
             // primaries = k2100 / Rec.2020 (enum 9, in 2..=17): selector u(2)=2, u(4)=9-2=7.
             output.put_bits(2, 2);
             output.put_bits(4, 7);
-            // transfer_function: have_gamma = 1, then gamma as u(24) = round(gamma * 1e7).
-            // The export sqrt-encodes (encoded = linear^0.5), so the OETF gamma is 0.5.
+            // transfer_function: have_gamma = 1, then gamma as u(24) = round(gamma * 1e7). The export sqrt-encodes (encoded = linear^0.5), so the OETF gamma is 0.5.
             output.put_bits(1, 1); // have_gamma = true
             output.put_bits(24, 5_000_000); // gamma 0.5 * 1e7
             output.put_bits(2, 1); // rendering_intent = kRelative (1)
