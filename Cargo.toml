@@ -1,0 +1,28 @@
+# Lumis fork of zune-jpegxl 0.5.2.
+#
+# Adds JxlSimpleEncoder::set_rec2020() so the codestream's ColourEncoding can signal
+# Rec.2020 (BT.2020 primaries + D65 + gamma transfer) instead of the hardcoded sRGB.
+# Upstream: https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl
+#
+# The crate name stays `zune-jpegxl` (lib `zune_jpegxl`) so it is a drop-in dependency.
+[package]
+name = "zune-jpegxl"
+version = "0.5.2"
+rust-version = "1.80.0"
+authors = ["caleb <etemesicaleb@gmail.com>", "Lumis fork"]
+edition = "2021"
+repository = "https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl"
+license = "MIT OR Apache-2.0 OR Zlib"
+keywords = ["jpeg-xl", "jpeg-xl-decoder", "decoder", "jxl"]
+categories = ["multimedia::images"]
+exclude = []
+description = "A simple, fast and fully safe modular jxl encoder (Lumis fork: Rec.2020 colour signalling)"
+
+[dependencies]
+zune-core = "^0.5.1"
+
+[features]
+threads = []
+std = []
+log = ["zune-core/log"]
+default = ["threads", "std"]
