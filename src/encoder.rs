@@ -1548,16 +1548,21 @@ fn prepare_header(frame: &mut FrameState, add_image_header: bool, is_last: bool)
             // `put_bits(2, v)` selects enum value `v` (0..2; 3 escapes to extended). Field
             // order for an RGB space (libjxl ColorEncodingBundle): colour_space, white_point,
             // primaries, transfer_function, rendering_intent.
+            // Enum fields use the JXL Enum distribution U32(Val(0), Val(1), BitsOffset(4,2),
+            // BitsOffset(6,18)): value 0 -> u(2)=0; value 1 -> u(2)=1; values 2..=17 ->
+            // selector u(2)=2 then u(4)=value-2; values 18.. -> selector u(2)=3 then u(6)=value-18.
             output.put_bits(1, 0); // all_default = false
             output.put_bits(1, 0); // want_icc = false
             output.put_bits(2, 0); // colour_space = kRGB (0)
             output.put_bits(2, 1); // white_point = kD65 (1)
-            output.put_bits(2, 2); // primaries = kP2100 / Rec.2020 (2)
+            // primaries = k2100 / Rec.2020 (enum 9, in 2..=17): selector u(2)=2, u(4)=9-2=7.
+            output.put_bits(2, 2);
+            output.put_bits(4, 7);
             // transfer_function: have_gamma = 1, then gamma as u(24) = round(gamma * 1e7).
             // The export sqrt-encodes (encoded = linear^0.5), so the OETF gamma is 0.5.
             output.put_bits(1, 1); // have_gamma = true
             output.put_bits(24, 5_000_000); // gamma 0.5 * 1e7
-            output.put_bits(2, 1); // rendering_intent = relative (1)
+            output.put_bits(2, 1); // rendering_intent = kRelative (1)
         } else if colorspace.num_components() > 2 {
             output.put_bits(1, 1); // color_encoding.all_default (sRGB)
         } else {
