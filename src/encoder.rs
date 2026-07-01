@@ -47,7 +47,9 @@ pub(crate) struct FrameState {
     current_bit_writer:  usize,
     bit_writer_byte_pos: usize,
     /// Lumis fork: carry the Rec.2020 colour flag into `prepare_header`.
-    rec2020:             bool
+    rec2020:             bool,
+    /// Lumis fork: image orientation (EXIF/JXL enum 1..8, 1 = identity) written into the codestream image metadata by `prepare_header`.
+    orientation:         u32
 }
 
 /// A simple jxl encoder
@@ -101,7 +103,9 @@ pub struct JxlSimpleEncoder<'a> {
     data:    &'a [u8],
     options: EncoderOptions,
     /// When true, signal Rec.2020 (BT.2020 primaries, D65 white, gamma transfer) in the codestream's ColourEncoding instead of the default sRGB. Lumis fork addition: the upstream encoder hardcodes sRGB and exposes no colour hook, so wide-gamut output is mis-tagged. See `prepare_header` for the bit layout.
-    rec2020: bool
+    rec2020: bool,
+    /// Image orientation as the EXIF/JXL enum (1..8, 1 = identity = no rotation). Lumis fork addition: the upstream encoder has no orientation hook, so a rotated capture could only be signalled by baking the pixels. See `prepare_header` for the bit layout. Kept in the codestream (not just EXIF) because JXL decoders treat the codestream orientation as authoritative and ignore EXIF orientation.
+    orientation: u32
 }
 
 pub(crate) struct ChunkSampleCollector<'a, T: JxlBitEncoder> {
@@ -1048,12 +1052,18 @@ impl<'a> JxlSimpleEncoder<'a> {
     /// - data: Raw pixel data
     /// - options: Encoder options for the raw pixels, this include the width, height colorspace, depth etc
     pub fn new(data: &'a [u8], options: EncoderOptions) -> JxlSimpleEncoder<'a> {
-        JxlSimpleEncoder { data, options, rec2020: false }
+        JxlSimpleEncoder { data, options, rec2020: false, orientation: 1 }
     }
 
     /// Lumis fork addition. Signal Rec.2020 (BT.2020 primaries + D65 white + gamma transfer) in the codestream's ColourEncoding rather than the default sRGB. Use this when the input RGB is wide-gamut Rec.2020 so profile-aware decoders interpret it correctly.
     pub fn set_rec2020(mut self, rec2020: bool) -> Self {
         self.rec2020 = rec2020;
+        self
+    }
+
+    /// Lumis fork addition. Set the image orientation as the EXIF/JXL enum (1..8, 1 = identity). Written into the codestream image metadata so decoders rotate on display without the pixels being baked. Values outside 1..8 are treated as 1 (identity). See `prepare_header`.
+    pub fn set_orientation(mut self, orientation: u32) -> Self {
+        self.orientation = if (1..=8).contains(&orientation) { orientation } else { 1 };
         self
     }
 
@@ -1317,7 +1327,8 @@ impl<'a> JxlSimpleEncoder<'a> {
                 group_data,
                 current_bit_writer: 0,
                 bit_writer_byte_pos: 0,
-                rec2020: self.rec2020
+                rec2020: self.rec2020,
+                orientation: self.orientation
             })
         }
         #[cfg(not(feature = "std"))]
@@ -1374,7 +1385,8 @@ impl<'a> JxlSimpleEncoder<'a> {
                 group_data,
                 current_bit_writer: 0,
                 bit_writer_byte_pos: 0,
-                rec2020: self.rec2020
+                rec2020: self.rec2020,
+                orientation: self.orientation
             })
         }
     }
@@ -1460,6 +1472,10 @@ fn fast_lossless_max_required_output(frame_state: &FrameState) -> usize {
 fn prepare_header(frame: &mut FrameState, add_image_header: bool, is_last: bool) {
     let colorspace = frame.option.colorspace();
     let depth = frame.option.depth();
+    // Lumis fork: image orientation for the codestream metadata. `extra_fields` is only set when the image is
+    // actually rotated, so upright images stay byte-identical to upstream.
+    let orientation = frame.orientation;
+    let extra_fields = orientation != 1;
 
     let output = &mut frame.header;
     output.allocate(1000 + frame.group_data.len() * 32);
@@ -1509,8 +1525,20 @@ fn prepare_header(frame: &mut FrameState, add_image_header: bool, is_last: bool)
 
         write_header(frame.option.width(), false);
         // hand crafted image metadata
-        output.put_bits(1, 0); // defaults
-        output.put_bits(1, 0); // extra fields
+        output.put_bits(1, 0); // all_default = false
+        // `extra_fields` gates orientation (+ intrinsic size / preview / animation), and also a tone_mapping
+        // bundle written just before `extensions`. Only set it when the image is rotated; otherwise leave it 0
+        // so the bitstream matches upstream. Field order per the JXL ImageMetadata bundle: extra_fields, then
+        // orientation (1 + u(3)), have_intr_size, have_preview, have_animation.
+        if extra_fields {
+            output.put_bits(1, 1); // extra_fields = true
+            output.put_bits(3, (orientation - 1) as u64); // orientation-1 (JXL/EXIF enum 1..8)
+            output.put_bits(1, 0); // have_intr_size = false
+            output.put_bits(1, 0); // have_preview = false
+            output.put_bits(1, 0); // have_animation = false
+        } else {
+            output.put_bits(1, 0); // extra_fields = false
+        }
         output.put_bits(1, 0); // bit depth floating point sample
 
         match depth {
@@ -1562,6 +1590,11 @@ fn prepare_header(frame: &mut FrameState, add_image_header: bool, is_last: bool)
             output.put_bits(2, 0b10); // tf: 2 + u(4)
             output.put_bits(4, 11); // tf of sRGB
             output.put_bits(2, 1); // relative rendering intent
+        }
+        // tone_mapping is present whenever extra_fields is set (JXL ImageMetadata). Its default form is a
+        // single all_default=true bit; we always use SDR defaults.
+        if extra_fields {
+            output.put_bits(1, 1); // tone_mapping.all_default = true
         }
         output.put_bits(2, 0b00); // No extensions.
 
